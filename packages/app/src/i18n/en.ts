@@ -379,6 +379,8 @@ export const dict = {
   "context.sources.skills": "Skills",
   "context.sources.tools": "Tools",
   "context.sources.conversation": "Conversation",
+  "context.sources.files": "Workspace Files",
+  "context.sources.logs": "Terminal Logs",
   "context.sources.other": "Other",
   "context.sources.groupBuiltIn": "Built-in",
   "context.sources.groupProjectUser": "Project / User",

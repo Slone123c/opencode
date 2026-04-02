@@ -15,7 +15,7 @@ import { MessageV2 } from "./message-v2"
 import { SystemPrompt } from "./system"
 import { ToolRegistry } from "../tool/registry"
 
-const CATEGORY = ["instructions", "skills", "tools", "conversation", "other"] as const
+const CATEGORY = ["instructions", "skills", "tools", "conversation", "files", "logs", "other"] as const
 const estimateTokens = (chars: number, ratio = 4) => Math.ceil(chars / ratio)
 
 export type ContextCategory = (typeof CATEGORY)[number]
@@ -31,6 +31,7 @@ export namespace SessionContextSource {
     group: z.string().optional(),
     calls: z.number().int().min(0).optional(),
     tokens: z.number(),
+    content: z.string().optional(),
   })
   export type Item = z.infer<typeof Item>
 
@@ -58,6 +59,7 @@ type SummaryItemInput = {
   chars?: number
   tokens?: number
   ratio?: number
+  content?: string
 }
 
 export function splitSkillDescription(description: string) {
@@ -106,6 +108,7 @@ export function skillItems(description: string, calls: Record<string, number> = 
         calls: calls[name] ?? 0,
         chars: block.length,
         ratio: 3.5,
+        content: block,
       },
     ]
   })
@@ -142,9 +145,11 @@ export function loadedSkillItems(messages: MessageV2.WithParts[]) {
       prev.calls += 1
       prev.chars += part.state.output.length
       if (!prev.source && dir) prev.source = shorten(path.join(dir, "SKILL.md"))
+      if (!prev.content) prev.content = ""
+      prev.content = prev.content ? prev.content + "\n\n---\n\n" + part.state.output : part.state.output
       acc.set(name, prev)
       return acc
-    }, new Map<string, SummaryItemInput & { chars: number; calls: number; ratio: number }>())
+    }, new Map<string, SummaryItemInput & { chars: number; calls: number; ratio: number; content?: string }>())
 
   return [...map.values()].sort((a, b) => b.chars - a.chars || a.title.localeCompare(b.title))
 }
@@ -182,6 +187,7 @@ export function buildContextSourceSummary(input: { input: number; items: Summary
       source: item.source,
       group: item.group,
       calls: item.calls,
+      content: item.content,
       tokens: item.tokens ?? estimateTokens(item.chars ?? 0, item.ratio),
     }))
     .filter((item) => item.tokens > 0)
@@ -282,6 +288,7 @@ const instructionItem = (input: string) => {
     title: label,
     source: source ? shorten(source) : undefined,
     chars: body.length,
+    content: body,
   }
 }
 
@@ -308,9 +315,10 @@ const toolDetail = (items: SummaryItemInput[], input: {
       source: input.id,
       group: input.group,
       chars: input.description.trim().length,
+      content: input.description.trim(),
     })
   }
-  const json = input.schema ? JSON.stringify(input.schema) : ""
+  const json = input.schema ? JSON.stringify(input.schema, null, 2) : ""
   if (!json) return
   append(items, {
     category: input.category,
@@ -318,12 +326,19 @@ const toolDetail = (items: SummaryItemInput[], input: {
     title: input.label ?? "Schema",
     source: input.id,
     group: input.group,
-    chars: json.length,
+    chars: JSON.stringify(input.schema).length,
     ratio: 3,
+    content: json,
   })
 }
 
 const conversationItems = (messages: MessageV2.WithParts[]) => {
+  const fileItems = new Map<string, number>()
+  const logItems = new Map<string, number>()
+
+  const isFileTool = (name: string) => ["read", "write", "edit", "apply_patch", "list", "glob", "grep"].includes(name)
+  const isTerminalTool = (name: string) => ["bash"].includes(name)
+
   const counts = messages.reduce(
     (acc, msg) => {
       if (msg.info.role === "user") {
@@ -337,6 +352,23 @@ const conversationItems = (messages: MessageV2.WithParts[]) => {
       const next = msg.parts.reduce(
         (sum, part) => {
           const val = charsFromAssistantPart(part)
+          
+          if (part.type === "tool") {
+            const name = part.tool
+            if (isFileTool(name)) {
+              let file = (part.state.input as any)?.filePath ?? (part.state.input as any)?.path ?? "Workspace File"
+              if (name === "apply_patch" && (part.state.input as any)?.files?.length > 0) file = (part.state.input as any).files[0].filePath ?? "Workspace Patch"
+              if (typeof file === "string") file = shorten(file)
+              fileItems.set(file, (fileItems.get(file) ?? 0) + val.tool)
+              val.tool = 0
+            } else if (isTerminalTool(name)) {
+              let cmd = (part.state.input as any)?.command ?? (part.state.input as any)?.description ?? "Terminal Session"
+              if (typeof cmd === "string" && cmd.length > 50) cmd = cmd.slice(0, 47) + "..."
+              logItems.set(cmd, (logItems.get(cmd) ?? 0) + val.tool)
+              val.tool = 0
+            }
+          }
+
           return {
             assistant: sum.assistant + val.assistant,
             tool: sum.tool + val.tool,
@@ -354,7 +386,7 @@ const conversationItems = (messages: MessageV2.WithParts[]) => {
     { user: 0, assistant: 0, tool: 0 },
   )
 
-  return [
+  const items: SummaryItemInput[] = [
     {
       category: "conversation" as const,
       key: "user_messages",
@@ -372,7 +404,7 @@ const conversationItems = (messages: MessageV2.WithParts[]) => {
     {
       category: "conversation" as const,
       key: "tool_call_content",
-      title: "Tool Call Content",
+      title: "Other Tool Calls",
       source: "messages",
       chars: counts.tool,
       ratio: 3,
@@ -385,6 +417,30 @@ const conversationItems = (messages: MessageV2.WithParts[]) => {
       tokens: messages.length * 4,
     },
   ]
+
+  for (const [file, chars] of fileItems.entries()) {
+    items.push({
+      category: "files" as const,
+      key: `file:${file}`,
+      title: file,
+      source: "workspace",
+      chars,
+      ratio: 3,
+    })
+  }
+
+  for (const [cmd, chars] of logItems.entries()) {
+    items.push({
+      category: "logs" as const,
+      key: `log:${cmd}`,
+      title: cmd,
+      source: "terminal",
+      chars,
+      ratio: 3,
+    })
+  }
+
+  return items
 }
 
 export async function estimateMessageContextSource(input: {
@@ -415,6 +471,7 @@ export async function estimateMessageContextSource(input: {
       title: "Agent Prompt",
       source: agent.name,
       chars: agent.prompt.trim().length,
+      content: agent.prompt.trim(),
     })
   } else {
     const prompt = isCodex ? SystemPrompt.instructionsInfo() : SystemPrompt.providerInfo(model)
@@ -424,6 +481,7 @@ export async function estimateMessageContextSource(input: {
       title: "Provider Prompt",
       source: prompt.source,
       chars: prompt.text.trim().length,
+      content: prompt.text.trim(),
     })
   }
 
@@ -435,6 +493,7 @@ export async function estimateMessageContextSource(input: {
       title: "Environment Prompt",
       source: `${model.providerID}/${model.api.id}`,
       chars: env[i].length,
+      content: env[i].trim(),
     })
   }
 
@@ -449,6 +508,7 @@ export async function estimateMessageContextSource(input: {
       title: "User System Prompt",
       source: parent.info.id,
       chars: parent.info.system.trim().length,
+      content: parent.info.system.trim(),
     })
   }
 
@@ -462,6 +522,7 @@ export async function estimateMessageContextSource(input: {
         title: "Skill Tool Wrapper",
         source: "skill",
         chars: split.wrapper.length,
+        content: split.wrapper,
       })
       for (const item of skillItems(tool.description, calls)) {
         append(items, item)
@@ -476,6 +537,7 @@ export async function estimateMessageContextSource(input: {
         source: "skill",
         chars: JSON.stringify(schema).length,
         ratio: 3,
+        content: JSON.stringify(schema, null, 2),
       })
       continue
     }
