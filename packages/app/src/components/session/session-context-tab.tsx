@@ -19,7 +19,7 @@ import { useSessionLayout } from "@/pages/session/session-layout"
 import { getSessionContextMetrics } from "./session-context-metrics"
 import { estimateSessionContextBreakdown, type SessionContextBreakdownKey } from "./session-context-breakdown"
 import { createSessionContextFormatter } from "./session-context-format"
-import { createContextSourceView, sortSkills, type ContextSourceCategory, type ContextSkillSort } from "./session-context-sources"
+import { createContextSourceView, sortSkills, toolGroups, instructionGroups, type ContextSourceCategory, type ContextSkillSort } from "./session-context-sources"
 
 const BREAKDOWN_COLOR: Record<SessionContextBreakdownKey, string> = {
   system: "var(--syntax-info)",
@@ -103,11 +103,20 @@ const emptyUserMessages: UserMessage[] = []
 
 type Meta = { text: string; tone?: "loaded" }
 
+function groupLabel(key: string) {
+  if (key === "built_in") return "Built-in"
+  if (key === "project_user") return "User"
+  if (key === "runtime") return "Agent"
+  if (key === "mcp") return "User"
+  return key
+}
+
 export function SessionContextTab() {
   const sdk = useSDK()
   const sync = useSync()
   const settings = useSettings()
   const [skillSort, setSkillSort] = createSignal<ContextSkillSort>("alpha")
+  const [toolSort, setToolSort] = createSignal<"built_in" | "mcp">("built_in")
   const [skillQuery, setSkillQuery] = createSignal("")
   const language = useLanguage()
   const providers = useProviders()
@@ -286,6 +295,26 @@ export function SessionContextTab() {
     return createContextSourceView(data)
   })
 
+  const [activeSegment, setActiveSegment] = createSignal<string | null>(null)
+
+  const skillStats = createMemo(() => {
+    const segment = sources()?.segments.find((item) => item.key === "skills")
+    if (!segment) return null
+    const loaded = segment.items.filter((item) => sourceMeta(item).some((m) => m.tone === "loaded"))
+    const desc = segment.items.filter((item) => sourceMeta(item).every((m) => m.tone !== "loaded"))
+
+    return {
+      loaded: {
+        count: loaded.length,
+        percent: loaded.reduce((acc, item) => acc + item.percent, 0),
+      },
+      desc: {
+        count: desc.length,
+        percent: desc.reduce((acc, item) => acc + item.percent, 0),
+      },
+    }
+  })
+
   const stats = [
     { label: "context.stats.session", value: () => info()?.title ?? params.id ?? "—" },
     { label: "context.stats.messages", value: () => counts().all.toLocaleString(language.intl()) },
@@ -374,161 +403,231 @@ export function SessionContextTab() {
         </div>
 
         <Show when={sources()}>
-          {(data) => (
-            <div class="flex flex-col gap-3">
-              <div class="text-12-regular text-text-weak">{language.t("context.sources.title")}</div>
-              <div class="h-2 w-full rounded-full bg-surface-base overflow-hidden flex">
-                <For each={data().segments}>
-                  {(segment) => (
-                    <div
-                      class="h-full"
-                      style={{
-                        width: `${segment.width}%`,
-                        "background-color": SOURCE_COLOR[segment.key],
-                      }}
-                    />
-                  )}
-                </For>
-              </div>
-              <div class="flex flex-wrap gap-x-3 gap-y-1">
-                <For each={data().segments}>
-                  {(segment) => (
-                    <div class="flex items-center gap-1 text-11-regular text-text-weak">
-                      <div class="size-2 rounded-sm" style={{ "background-color": SOURCE_COLOR[segment.key] }} />
-                      <div>{sourceLabel(segment.key)}</div>
-                      <div class="text-text-weaker">{segment.percent.toLocaleString(language.intl())}%</div>
-                    </div>
-                  )}
-                </For>
-              </div>
-              <Accordion multiple>
-                <For each={data().segments}>
-                  {(segment) => {
-                    const maxTokens = Math.max(1, ...segment.items.map((i) => i.tokens));
-                    const visible = createMemo(() =>
-                      segment.key === "skills" ? sortSkills(segment.items, skillSort(), skillQuery()) : segment.items
-                    );
-                    return (
-                      <Accordion.Item value={`source-${segment.key}`}>
-                        <Accordion.Trigger>
-                        <div class="flex items-center justify-between gap-3 w-full text-left">
-                          <div class="flex items-center gap-2 min-w-0">
-                            <div
-                              class="size-2 rounded-sm shrink-0"
-                              style={{ "background-color": SOURCE_COLOR[segment.key] }}
-                            />
-                            <div class="truncate">{sourceLabel(segment.key)}</div>
+          {(data) => {
+            const getActive = () => activeSegment() || data().segments[0]?.key;
+            return (
+              <div class="flex flex-col gap-3">
+                <div class="flex items-center justify-between">
+                  <div class="text-12-regular text-text-weak">{language.t("context.sources.title")}</div>
+                  <Show when={skillStats()}>
+                    {(stats) => (
+                      <div class="flex items-center gap-1.5 text-11-regular text-text-weak">
+                        <span>⚡</span>
+                        <span class="text-text-strong">{stats().loaded.count.toLocaleString(language.intl())}</span>
+                        <span>Skill {language.t("context.sources.summaryLoaded")}</span>
+                        <span class="text-text-weaker">({stats().loaded.percent.toLocaleString(language.intl())}%)</span>
+                        <span class="text-text-weaker">·</span>
+                        <span class="text-text-strong">{stats().desc.count.toLocaleString(language.intl())}</span>
+                        <span>Skill {language.t("context.sources.summaryDescription")}</span>
+                        <span class="text-text-weaker">({stats().desc.percent.toLocaleString(language.intl())}%)</span>
+                      </div>
+                    )}
+                  </Show>
+                </div>
+
+                <div class="flex gap-2 w-full overflow-x-auto pb-1 scrollbar-hide">
+                  <For each={data().segments}>
+                    {(segment) => {
+                      const weight = Math.max(15, Math.min(60, segment.percent))
+                      const isActive = () => getActive() === segment.key
+                      
+                      return (
+                        <button
+                          onClick={() => setActiveSegment(segment.key)}
+                          class={`flex flex-col gap-1.5 rounded-md border p-2 min-w-0 transition-all text-left focus:outline-none ${isActive() ? "bg-surface-elevated border-border-strong shadow-sm" : "bg-surface-base border-border-base opacity-70 hover:opacity-100 hover:border-border-strong cursor-pointer"}`}
+                          style={{ "flex": `${weight} 1 0%`, "border-top-color": SOURCE_COLOR[segment.key], "border-top-width": isActive() ? "3px" : "2px" }}
+                        >
+                          <div class="text-11-medium text-text-strong truncate w-full">{sourceLabel(segment.key)}</div>
+                          <div class="flex items-end justify-between w-full mt-auto">
+                            <div class="text-[10px] text-text-weaker truncate">{formatter().number(segment.tokens)}</div>
+                            <div class="text-12-medium text-text-strong leading-none">{segment.percent.toLocaleString(language.intl())}%</div>
                           </div>
-                          <div class="flex items-center gap-3 shrink-0 text-12-regular text-text-weak">
-                            <div>{formatter().number(segment.tokens)}</div>
-                            <div>{segment.percent.toLocaleString(language.intl())}%</div>
-                            <Icon name="chevron-grabber-vertical" size="small" class="shrink-0 text-text-weak" />
-                          </div>
-                        </div>
-                      </Accordion.Trigger>
-                      <Accordion.Content class="bg-background-base">
-                        <div class="ml-5 mr-1 my-1 border-l-2 flex flex-col gap-1" style={{ "border-color": SOURCE_COLOR[segment.key] }}>
-                          <Show when={segment.key === "skills"}>
-                            <div class="px-2 pt-1 pb-1 flex items-center justify-between gap-3">
-                              <div class="flex-1 max-w-[200px]">
-                                <input 
-                                  type="text" 
-                                  placeholder={language.t("context.sources.searchSkills")} 
-                                  value={skillQuery()} 
-                                  onInput={(e) => setSkillQuery(e.currentTarget.value)}
-                                  class="w-full bg-surface-base border border-border-base rounded text-11-regular px-2 py-0.5 outline-none focus:border-border-strong text-text-strong placeholder-text-weaker shadow-sm transition-colors"
-                                />
+                        </button>
+                      )
+                    }}
+                  </For>
+                </div>
+
+                <div class="flex flex-col gap-1">
+                  <For each={data().segments}>
+                    {(segment) => {
+                      const isActive = () => getActive() === segment.key;
+                      const maxTokens = Math.max(1, ...segment.items.map((i) => i.tokens));
+                      
+                      const SegmentItem = (props: { item: any }) => {
+                        const item = props.item;
+                        const ratio = item.tokens / maxTokens;
+                        return (
+                          <div 
+                            class="flex items-start justify-between gap-3 text-12-regular px-1.5 py-1 rounded transition-colors bg-[var(--item-bg)] hover:bg-[var(--item-hover-bg)]"
+                            style={{
+                              "--item-bg": `color-mix(in srgb, ${SOURCE_COLOR[segment.key]} ${Math.max(2, ratio * 20)}%, transparent)`,
+                              "--item-hover-bg": `color-mix(in srgb, ${SOURCE_COLOR[segment.key]} ${Math.max(6, ratio * 20 + 8)}%, transparent)`,
+                            } as any}
+                          >
+                            <div class="min-w-0 flex flex-col justify-center">
+                              <div class="flex items-center gap-1.5 flex-wrap">
+                                <span class="text-text-strong truncate">{item.title}</span>
+                                <Show when={sourceMeta(item).length > 0}>
+                                  <For each={sourceMeta(item)}>
+                                    {(meta) => (
+                                      <span
+                                        class={`px-1 rounded text-[10px] leading-tight border whitespace-nowrap ${
+                                          meta.tone === "loaded"
+                                            ? "text-text-strong border-transparent"
+                                            : "bg-surface-base text-text-weak border-border-base"
+                                        }`}
+                                        style={
+                                          meta.tone === "loaded"
+                                            ? {
+                                                "background-color": "color-mix(in srgb, var(--syntax-string) 30%, var(--surface-base))",
+                                              }
+                                            : undefined
+                                        }
+                                      >
+                                        {meta.text}
+                                      </span>
+                                    )}
+                                  </For>
+                                </Show>
                               </div>
-                              <div class="flex items-center gap-0.5 bg-surface-base p-0.5 rounded shadow-sm border border-border-base shrink-0">
-                                <button
-                                  onClick={() => setSkillSort("alpha")}
-                                  class={`px-2 py-0.5 rounded-sm text-[10px] leading-tight transition-colors ${
-                                    skillSort() === "alpha" ? "bg-background-base text-text-strong shadow-sm" : "text-text-weaker hover:text-text-base cursor-pointer"
-                                  }`}
-                                >
-                                  {language.t("context.sources.sortAlpha")}
-                                </button>
-                                <button
-                                  onClick={() => setSkillSort("calls")}
-                                  class={`px-2 py-0.5 rounded-sm text-[10px] leading-tight transition-colors ${
-                                    skillSort() === "calls" ? "bg-background-base text-text-strong shadow-sm" : "text-text-weaker hover:text-text-base cursor-pointer"
-                                  }`}
-                                >
-                                  {language.t("context.sources.sortCalls")}
-                                </button>
-                                <button
-                                  onClick={() => setSkillSort("percent")}
-                                  class={`px-2 py-0.5 rounded-sm text-[10px] leading-tight transition-colors ${
-                                    skillSort() === "percent" ? "bg-background-base text-text-strong shadow-sm" : "text-text-weaker hover:text-text-base cursor-pointer"
-                                  }`}
-                                >
-                                  {language.t("context.sources.sortPercent")}
-                                </button>
+                              <Show when={item.source}>
+                                {(source) => <div class="text-11-regular text-text-weaker truncate mt-0.5" title={source()}>{source()}</div>}
+                              </Show>
+                            </div>
+                            <div class="shrink-0 text-right">
+                              <div class="text-text-strong">{formatter().number(item.tokens)}</div>
+                              <div class="text-[10px] text-text-weaker leading-tight">
+                                {item.percent.toLocaleString(language.intl())}%
                               </div>
                             </div>
-                          </Show>
-                          <div class="max-h-[300px] overflow-y-auto pl-2 py-1 flex flex-col gap-[1px]">
-                            <For each={visible()}>
-                              {(item) => {
-                                const ratio = item.tokens / maxTokens;
-                                return (
-                                  <div 
-                                    class="flex items-start justify-between gap-3 text-12-regular px-1.5 py-1 rounded transition-colors bg-[var(--item-bg)] hover:bg-[var(--item-hover-bg)]"
-                                    style={{
-                                      "--item-bg": `color-mix(in srgb, ${SOURCE_COLOR[segment.key]} ${Math.max(2, ratio * 20)}%, transparent)`,
-                                      "--item-hover-bg": `color-mix(in srgb, ${SOURCE_COLOR[segment.key]} ${Math.max(6, ratio * 20 + 8)}%, transparent)`,
-                                    }}
-                                  >
-                                    <div class="min-w-0 flex flex-col justify-center">
-                                      <div class="flex items-center gap-1.5 flex-wrap">
-                                        <span class="text-text-strong truncate">{item.title}</span>
-                                        <Show when={sourceMeta(item).length > 0}>
-                                          <For each={sourceMeta(item)}>
-                                            {(meta) => (
-                                              <span
-                                                class={`px-1 rounded text-[10px] leading-tight border whitespace-nowrap ${
-                                                  meta.tone === "loaded"
-                                                    ? "text-text-strong border-transparent"
-                                                    : "bg-surface-base text-text-weak border-border-base"
-                                                }`}
-                                                style={
-                                                  meta.tone === "loaded"
-                                                    ? {
-                                                        "background-color": "color-mix(in srgb, var(--syntax-string) 30%, var(--surface-base))",
-                                                      }
-                                                    : undefined
-                                                }
-                                              >
-                                                {meta.text}
-                                              </span>
-                                            )}
-                                          </For>
-                                        </Show>
-                                      </div>
-                                      <Show when={item.source}>
-                                        {(source) => <div class="text-11-regular text-text-weaker truncate mt-0.5" title={source()}>{source()}</div>}
-                                      </Show>
-                                    </div>
-                                    <div class="shrink-0 text-right">
-                                      <div class="text-text-strong">{formatter().number(item.tokens)}</div>
-                                      <div class="text-[10px] text-text-weaker leading-tight">
-                                        {item.percent.toLocaleString(language.intl())}%
-                                      </div>
-                                    </div>
-                                  </div>
-                                );
-                              }}
-                            </For>
                           </div>
-                        </div>
-                      </Accordion.Content>
-                    </Accordion.Item>
-                  );
-                }}
-                </For>
-              </Accordion>
-            </div>
-          )}
+                        );
+                      };
+
+                      return (
+                        <Show when={isActive()}>
+                          <div class="flex flex-col gap-1 mt-1">
+                            <Show when={segment.key === "skills"}>
+                              <div class="px-2 pt-1 pb-1 flex items-center justify-between gap-3">
+                                <div class="flex-1 max-w-[200px]">
+                                  <input 
+                                    type="text" 
+                                    placeholder={language.t("context.sources.searchSkills")} 
+                                    value={skillQuery()} 
+                                    onInput={(e) => setSkillQuery(e.currentTarget.value)}
+                                    class="w-full bg-surface-base border border-border-base rounded text-11-regular px-2 py-0.5 outline-none focus:border-border-strong text-text-strong placeholder-text-weaker shadow-sm transition-colors"
+                                  />
+                                </div>
+                                <div class="flex items-center gap-0.5 bg-surface-base p-0.5 rounded shadow-sm border border-border-base shrink-0">
+                                  <button
+                                    onClick={() => setSkillSort("alpha")}
+                                    class={`px-2 py-0.5 rounded-sm text-[10px] leading-tight transition-colors ${
+                                      skillSort() === "alpha" ? "bg-background-base text-text-strong shadow-sm" : "text-text-weaker hover:text-text-base cursor-pointer"
+                                    }`}
+                                  >
+                                    {language.t("context.sources.sortAlpha")}
+                                  </button>
+                                  <button
+                                    onClick={() => setSkillSort("calls")}
+                                    class={`px-2 py-0.5 rounded-sm text-[10px] leading-tight transition-colors ${
+                                      skillSort() === "calls" ? "bg-background-base text-text-strong shadow-sm" : "text-text-weaker hover:text-text-base cursor-pointer"
+                                    }`}
+                                  >
+                                    {language.t("context.sources.sortCalls")}
+                                  </button>
+                                  <button
+                                    onClick={() => setSkillSort("percent")}
+                                    class={`px-2 py-0.5 rounded-sm text-[10px] leading-tight transition-colors ${
+                                      skillSort() === "percent" ? "bg-background-base text-text-strong shadow-sm" : "text-text-weaker hover:text-text-base cursor-pointer"
+                                    }`}
+                                  >
+                                    {language.t("context.sources.sortPercent")}
+                                  </button>
+                                </div>
+                              </div>
+                              <div class="max-h-[300px] overflow-y-auto pl-2 py-1 flex flex-col gap-[1px]">
+                                <For each={sortSkills(segment.items, skillSort(), skillQuery())}>
+                                  {(item) => <SegmentItem item={item} />}
+                                </For>
+                              </div>
+                            </Show>
+                            
+                            <Show when={segment.key === "instructions"}>
+                              <div class="max-h-[300px] overflow-y-auto pl-2 py-1 flex flex-col gap-2">
+                                <For each={instructionGroups(segment.items)}>
+                                  {(group) => (
+                                    <div class="flex flex-col gap-[1px]">
+                                      <div class="text-11-medium text-text-weak px-1.5 pb-1 flex items-center justify-between">
+                                        <span>{groupLabel(group.key)}</span>
+                                        <span>{formatter().number(group.tokens)}</span>
+                                      </div>
+                                      <For each={group.items}>
+                                        {(item) => <SegmentItem item={item} />}
+                                      </For>
+                                    </div>
+                                  )}
+                                </For>
+                              </div>
+                            </Show>
+                            
+                            <Show when={segment.key === "tools"}>
+                              <div class="px-2 pt-1 pb-1 flex items-center justify-end gap-3 mx-1 mb-1">
+                                <div class="flex items-center gap-0.5 bg-surface-base p-0.5 rounded shadow-sm border border-border-base shrink-0">
+                                  <button
+                                    onClick={() => setToolSort("built_in")}
+                                    class={`px-2 py-0.5 rounded-sm text-[10px] leading-tight transition-colors ${
+                                      toolSort() === "built_in" ? "bg-background-base text-text-strong shadow-sm" : "text-text-weaker hover:text-text-base cursor-pointer"
+                                    }`}
+                                  >
+                                    Built-in
+                                  </button>
+                                  <button
+                                    onClick={() => setToolSort("mcp")}
+                                    class={`px-2 py-0.5 rounded-sm text-[10px] leading-tight transition-colors ${
+                                      toolSort() === "mcp" ? "bg-background-base text-text-strong shadow-sm" : "text-text-weaker hover:text-text-base cursor-pointer"
+                                    }`}
+                                  >
+                                    User
+                                  </button>
+                                </div>
+                              </div>
+                              <div class="max-h-[300px] overflow-y-auto pl-2 py-1 flex flex-col gap-2 pt-1">
+                                <For each={toolGroups(segment.items).sort((a, b) => {
+                                  if (toolSort() === "built_in") return a.key === "built_in" ? -1 : 1;
+                                  return a.key === "mcp" ? -1 : 1;
+                                })}>
+                                  {(group) => (
+                                    <div class="flex flex-col gap-[1px]">
+                                      <div class="text-11-medium text-text-weak px-1.5 pb-1 flex items-center justify-between border-b border-border-base mx-1.5 mb-1.5 pt-1 first:pt-0">
+                                        <span>{groupLabel(group.key)}</span>
+                                        <span>{formatter().number(group.tokens)}</span>
+                                      </div>
+                                      <For each={group.items}>
+                                        {(tool) => <SegmentItem item={tool} />}
+                                      </For>
+                                    </div>
+                                  )}
+                                </For>
+                              </div>
+                            </Show>
+                            
+                            <Show when={segment.key !== "skills" && segment.key !== "instructions" && segment.key !== "tools"}>
+                              <div class="max-h-[300px] overflow-y-auto pl-2 py-1 flex flex-col gap-[1px]">
+                                <For each={segment.items}>
+                                  {(item) => <SegmentItem item={item} />}
+                                </For>
+                              </div>
+                            </Show>
+                          </div>
+                        </Show>
+                      );
+                    }}
+                  </For>
+                </div>
+              </div>
+            );
+          }}
         </Show>
 
         <Show when={breakdown().length > 0}>

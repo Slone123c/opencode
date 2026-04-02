@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { createContextSourceView, sortSkills } from "./session-context-sources"
+import { createContextSourceView, instructionGroups, skillGroups, sortSkills, toolGroups } from "./session-context-sources"
 
 describe("createContextSourceView", () => {
   test("sorts segments by token size", () => {
@@ -221,6 +221,200 @@ describe("createContextSourceView", () => {
       "loaded_skill:debugging",
       "skill:alpha",
       "skill:learn",
+    ])
+  })
+
+  test("groups skills into loaded, description, and supporting sections", () => {
+    const items = [
+      {
+        category: "skills" as const,
+        key: "skill:learn",
+        title: "learn",
+        source: "~/.codex/skills/learn/SKILL.md",
+        tokens: 40,
+        percent: 40,
+        share: 100,
+        group: "skill_list",
+        calls: 0,
+      },
+      {
+        category: "skills" as const,
+        key: "loaded_skill:debugging",
+        title: "debugging",
+        source: "~/.codex/skills/debugging/SKILL.md",
+        tokens: 10,
+        percent: 10,
+        share: 100,
+        group: "loaded_skill",
+        calls: 1,
+      },
+      {
+        category: "skills" as const,
+        key: "skill_wrapper",
+        title: "Skill Tool Wrapper",
+        source: "skill",
+        tokens: 20,
+        percent: 20,
+      },
+    ]
+
+    expect(
+      skillGroups(items, "percent", "").map((group) => ({
+        key: group.key,
+        tokens: group.tokens,
+        items: group.items.map((item) => item.key),
+      })),
+    ).toEqual([
+      {
+        key: "loaded_skill",
+        tokens: 10,
+        items: ["loaded_skill:debugging"],
+      },
+      {
+        key: "skill_list",
+        tokens: 40,
+        items: ["skill:learn"],
+      },
+      {
+        key: "other",
+        tokens: 20,
+        items: ["skill_wrapper"],
+      },
+    ])
+  })
+
+  test("groups instructions into built-in, project-user, and runtime sections", () => {
+    const items = [
+      {
+        category: "instructions" as const,
+        key: "provider_prompt",
+        title: "Provider Prompt",
+        source: "qwen.txt",
+        tokens: 20,
+        percent: 20,
+      },
+      {
+        category: "instructions" as const,
+        key: "instruction:/repo/AGENTS.md",
+        title: "Project Instructions",
+        source: "/repo/AGENTS.md",
+        tokens: 12,
+        percent: 12,
+      },
+      {
+        category: "instructions" as const,
+        key: "user_system_prompt",
+        title: "User System Prompt",
+        source: "msg_1",
+        tokens: 8,
+        percent: 8,
+      },
+      {
+        category: "instructions" as const,
+        key: "environment_prompt",
+        title: "Environment Prompt",
+        source: "provider/model",
+        tokens: 6,
+        percent: 6,
+      },
+    ]
+
+    expect(
+      instructionGroups(items).map((group) => ({
+        key: group.key,
+        tokens: group.tokens,
+        items: group.items.map((item) => item.key),
+      })),
+    ).toEqual([
+      {
+        key: "built_in",
+        tokens: 20,
+        items: ["provider_prompt"],
+      },
+      {
+        key: "project_user",
+        tokens: 20,
+        items: ["instruction:/repo/AGENTS.md", "user_system_prompt"],
+      },
+      {
+        key: "runtime",
+        tokens: 6,
+        items: ["environment_prompt"],
+      },
+    ])
+  })
+
+  test("groups tools by source and mcp state", () => {
+    const items = [
+      {
+        category: "tools" as const,
+        key: "edit.description",
+        title: "Description",
+        source: "edit",
+        tokens: 12,
+        percent: 12,
+      },
+      {
+        category: "tools" as const,
+        key: "edit.schema",
+        title: "Schema",
+        source: "edit",
+        tokens: 30,
+        percent: 30,
+      },
+      {
+        category: "tools" as const,
+        key: "mcp.fetch.description",
+        title: "Description",
+        source: "mcp.fetch",
+        group: "mcp",
+        tokens: 5,
+        percent: 5,
+      },
+      {
+        category: "tools" as const,
+        key: "mcp.fetch.schema",
+        title: "Schema",
+        source: "mcp.fetch",
+        group: "mcp",
+        tokens: 9,
+        percent: 9,
+      },
+    ]
+
+    expect(
+      toolGroups(items).map((group) => ({
+        key: group.key,
+        tokens: group.tokens,
+        items: group.items.map((item) => ({
+          key: item.key,
+          tokens: item.tokens,
+          items: item.items.map((child) => child.key),
+        })),
+      })),
+    ).toEqual([
+      {
+        key: "built_in",
+        tokens: 42,
+        items: [
+          {
+            key: "edit",
+            tokens: 42,
+            items: ["edit.schema", "edit.description"],
+          },
+        ],
+      },
+      {
+        key: "mcp",
+        tokens: 14,
+        items: [
+          {
+            key: "mcp.fetch",
+            tokens: 14,
+            items: ["mcp.fetch.schema", "mcp.fetch.description"],
+          },
+        ],
+      },
     ])
   })
 

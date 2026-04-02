@@ -35,6 +35,33 @@ export type ContextSourceViewSegment = {
   items: ContextSourceViewItem[]
 }
 
+export type ContextSourceSkillGroup = {
+  key: "loaded_skill" | "skill_list" | "other"
+  tokens: number
+  items: ContextSourceViewItem[]
+}
+
+export type ContextSourceInstructionGroup = {
+  key: "built_in" | "project_user" | "runtime"
+  tokens: number
+  items: ContextSourceViewItem[]
+}
+
+export type ContextSourceToolItem = {
+  key: string
+  title: string
+  group?: string
+  tokens: number
+  percent: number
+  items: ContextSourceViewItem[]
+}
+
+export type ContextSourceToolGroup = {
+  key: "built_in" | "mcp"
+  tokens: number
+  items: ContextSourceToolItem[]
+}
+
 const percent = (tokens: number, input: number) => (tokens / input) * 100
 const label = (tokens: number, input: number) => Math.round(percent(tokens, input) * 10) / 10
 
@@ -54,6 +81,102 @@ export function sortSkills(items: ContextSourceViewItem[], mode: ContextSkillSor
     if (mode === "calls") return (b.calls ?? 0) - (a.calls ?? 0) || a.title.localeCompare(b.title)
     return a.title.localeCompare(b.title)
   })
+}
+
+export function skillGroups(items: ContextSourceViewItem[], mode: ContextSkillSort, query: string) {
+  const list = sortSkills(items, mode, query)
+  return [
+    {
+      key: "loaded_skill",
+      items: list.filter((item) => item.group === "loaded_skill"),
+    },
+    {
+      key: "skill_list",
+      items: list.filter((item) => item.group === "skill_list"),
+    },
+    {
+      key: "other",
+      items: list.filter((item) => item.group !== "loaded_skill" && item.group !== "skill_list"),
+    },
+  ]
+    .map((group) => ({
+      ...group,
+      tokens: group.items.reduce((sum, item) => sum + item.tokens, 0),
+    }))
+    .filter((group) => group.items.length > 0) as ContextSourceSkillGroup[]
+}
+
+const instructionKey = (item: ContextSourceViewItem) => {
+  if (item.key === "provider_prompt" || item.key === "agent_prompt") return "built_in"
+  if (item.key.startsWith("environment_prompt")) return "runtime"
+  return "project_user"
+}
+
+export function instructionGroups(items: ContextSourceViewItem[]) {
+  return [
+    {
+      key: "built_in",
+      items: items.filter((item) => instructionKey(item) === "built_in"),
+    },
+    {
+      key: "project_user",
+      items: items.filter((item) => instructionKey(item) === "project_user"),
+    },
+    {
+      key: "runtime",
+      items: items.filter((item) => instructionKey(item) === "runtime"),
+    },
+  ]
+    .map((group) => ({
+      ...group,
+      tokens: group.items.reduce((sum, item) => sum + item.tokens, 0),
+    }))
+    .filter((group) => group.items.length > 0) as ContextSourceInstructionGroup[]
+}
+
+export function toolGroups(items: ContextSourceViewItem[]) {
+  const buckets = [
+    {
+      key: "built_in",
+      items: items.filter((item) => item.group !== "mcp"),
+    },
+    {
+      key: "mcp",
+      items: items.filter((item) => item.group === "mcp"),
+    },
+  ]
+
+  return buckets
+    .map((bucket) => {
+      const map = bucket.items.reduce((acc, item) => {
+        const key = item.source ?? item.key
+        const prev = acc.get(key) ?? {
+          key,
+          title: key,
+          group: item.group,
+          tokens: 0,
+          percent: 0,
+          items: [] as ContextSourceViewItem[],
+        }
+        prev.tokens += item.tokens
+        prev.percent += item.percent
+        prev.items.push(item)
+        acc.set(key, prev)
+        return acc
+      }, new Map<string, ContextSourceToolItem>())
+
+      return {
+        key: bucket.key,
+        tokens: bucket.items.reduce((sum, item) => sum + item.tokens, 0),
+        items: [...map.values()]
+          .map((item) => ({
+            ...item,
+            items: [...item.items].sort((a, b) => b.tokens - a.tokens || a.title.localeCompare(b.title)),
+          }))
+          .sort((a, b) => b.tokens - a.tokens || a.title.localeCompare(b.title)),
+      }
+    })
+    .filter((bucket) => bucket.items.length > 0) as ContextSourceToolGroup[]
 }
 
 export function createContextSourceView(input: ContextSourceInfo) {
