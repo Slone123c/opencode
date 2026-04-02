@@ -17,20 +17,35 @@ import { Permission } from "@/permission"
 import { Skill } from "@/skill"
 
 export namespace SystemPrompt {
-  export function provider(model: Provider.Model) {
+  export function instructionsInfo() {
+    return {
+      source: "codex.txt",
+      text: PROMPT_CODEX.trim(),
+    }
+  }
+
+  export function instructions() {
+    return instructionsInfo().text
+  }
+
+  export function providerInfo(model: Provider.Model) {
     if (model.api.id.includes("gpt-4") || model.api.id.includes("o1") || model.api.id.includes("o3"))
-      return [PROMPT_BEAST]
+      return { source: "beast.txt", text: PROMPT_BEAST }
     if (model.api.id.includes("gpt")) {
       if (model.api.id.includes("codex")) {
-        return [PROMPT_CODEX]
+        return { source: "codex.txt", text: PROMPT_CODEX }
       }
-      return [PROMPT_GPT]
+      return { source: "gpt.txt", text: PROMPT_GPT }
     }
-    if (model.api.id.includes("gemini-")) return [PROMPT_GEMINI]
-    if (model.api.id.includes("claude")) return [PROMPT_ANTHROPIC]
-    if (model.api.id.toLowerCase().includes("trinity")) return [PROMPT_TRINITY]
-    if (model.api.id.toLowerCase().includes("kimi")) return [PROMPT_KIMI]
-    return [PROMPT_DEFAULT]
+    if (model.api.id.includes("gemini-")) return { source: "gemini.txt", text: PROMPT_GEMINI }
+    if (model.api.id.includes("claude")) return { source: "anthropic.txt", text: PROMPT_ANTHROPIC }
+    if (model.api.id.toLowerCase().includes("trinity")) return { source: "trinity.txt", text: PROMPT_TRINITY }
+    if (model.api.id.toLowerCase().includes("kimi")) return { source: "kimi.txt", text: PROMPT_KIMI }
+    return { source: "default.txt", text: PROMPT_DEFAULT }
+  }
+
+  export function provider(model: Provider.Model) {
+    return [providerInfo(model).text]
   }
 
   export async function environment(model: Provider.Model) {

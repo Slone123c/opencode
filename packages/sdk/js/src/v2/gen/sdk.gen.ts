@@ -129,6 +129,8 @@ import type {
   SessionInitErrors,
   SessionInitResponses,
   SessionListResponses,
+  SessionMessageContextErrors,
+  SessionMessageContextResponses,
   SessionMessageErrors,
   SessionMessageResponses,
   SessionMessagesErrors,
@@ -2138,6 +2140,44 @@ export class Session2 extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    })
+  }
+
+  /**
+   * Get message context sources
+   *
+   * Retrieve an approximate breakdown of the sources that make up a message's input context.
+   */
+  public messageContext<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      messageID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "path", key: "messageID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<
+      SessionMessageContextResponses,
+      SessionMessageContextErrors,
+      ThrowOnError
+    >({
+      url: "/session/{sessionID}/message/{messageID}/context",
+      ...options,
+      ...params,
     })
   }
 

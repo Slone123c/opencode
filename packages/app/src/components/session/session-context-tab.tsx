@@ -1,6 +1,8 @@
-import { createMemo, createEffect, on, onCleanup, For, Show } from "solid-js"
+import { createMemo, createEffect, createResource, on, onCleanup, For, Show, createSignal } from "solid-js"
 import type { JSX } from "solid-js"
 import { useSync } from "@/context/sync"
+import { useSDK } from "@/context/sdk"
+import { useSettings } from "@/context/settings"
 import { checksum } from "@opencode-ai/util/encode"
 import { findLast } from "@opencode-ai/util/array"
 import { same } from "@/utils/same"
@@ -17,12 +19,21 @@ import { useSessionLayout } from "@/pages/session/session-layout"
 import { getSessionContextMetrics } from "./session-context-metrics"
 import { estimateSessionContextBreakdown, type SessionContextBreakdownKey } from "./session-context-breakdown"
 import { createSessionContextFormatter } from "./session-context-format"
+import { createContextSourceView, sortSkills, type ContextSourceCategory, type ContextSkillSort } from "./session-context-sources"
 
 const BREAKDOWN_COLOR: Record<SessionContextBreakdownKey, string> = {
   system: "var(--syntax-info)",
   user: "var(--syntax-success)",
   assistant: "var(--syntax-property)",
   tool: "var(--syntax-warning)",
+  other: "var(--syntax-comment)",
+}
+
+const SOURCE_COLOR: Record<ContextSourceCategory, string> = {
+  instructions: "var(--syntax-info)",
+  skills: "var(--syntax-string)",
+  tools: "var(--syntax-warning)",
+  conversation: "var(--syntax-success)",
   other: "var(--syntax-comment)",
 }
 
@@ -90,8 +101,14 @@ function RawMessage(props: {
 const emptyMessages: Message[] = []
 const emptyUserMessages: UserMessage[] = []
 
+type Meta = { text: string; tone?: "loaded" }
+
 export function SessionContextTab() {
+  const sdk = useSDK()
   const sync = useSync()
+  const settings = useSettings()
+  const [skillSort, setSkillSort] = createSignal<ContextSkillSort>("alpha")
+  const [skillQuery, setSkillQuery] = createSignal("")
   const language = useLanguage()
   const providers = useProviders()
   const { params, view } = useSessionLayout()
@@ -196,6 +213,79 @@ export function SessionContextTab() {
     return language.t("context.breakdown.other")
   }
 
+  const sourceLabel = (key: ContextSourceCategory) => {
+    if (key === "instructions") return language.t("context.sources.instructions")
+    if (key === "skills") return language.t("context.sources.skills")
+    if (key === "tools") return language.t("context.sources.tools")
+    if (key === "conversation") return language.t("context.sources.conversation")
+    return language.t("context.sources.other")
+  }
+
+  const sourceMeta = (item: { group?: string; share?: number; calls?: number }) => {
+    const list: Meta[] = []
+
+    if (item.group === "mcp") {
+      list.push({ text: "MCP" })
+    }
+
+    if (item.group === "skill_list") {
+      list.push({ text: language.t("context.sources.groupSkillList") })
+    }
+
+    if (item.group === "loaded_skill") {
+      list.push({ text: language.t("context.sources.groupLoadedSkill"), tone: "loaded" })
+    }
+
+    if (item.group === "skill_list" && item.share !== undefined) {
+      list.push({
+        text: language.t("context.sources.skillShare", {
+          percent: item.share.toLocaleString(language.intl()),
+        }),
+      })
+    }
+
+    if (item.group === "loaded_skill" && item.share !== undefined) {
+      list.push({
+        text: language.t("context.sources.loadedShare", {
+          percent: item.share.toLocaleString(language.intl()),
+        }),
+      })
+    }
+
+    if (item.calls !== undefined) {
+      list.push({
+        text: language.t("context.sources.calls", {
+          count: item.calls.toLocaleString(language.intl()),
+        }),
+      })
+    }
+
+    return list
+  }
+
+  const [sourceData] = createResource(
+    () => {
+      if (!settings.general.showContextSources()) return
+      const sessionID = params.id
+      const messageID = ctx()?.message.id
+      if (!sessionID || !messageID) return
+      return { sessionID, messageID }
+    },
+    async (input) => {
+      return sdk.client.session
+        .messageContext(input)
+        .then((result) => result.data ?? { input: 0, segments: [] })
+        .catch(() => ({ input: 0, segments: [] }))
+    },
+  )
+
+  const sources = createMemo(() => {
+    if (!settings.general.showContextSources()) return
+    const data = sourceData()
+    if (!data?.segments?.length) return
+    return createContextSourceView(data)
+  })
+
   const stats = [
     { label: "context.stats.session", value: () => info()?.title ?? params.id ?? "—" },
     { label: "context.stats.messages", value: () => counts().all.toLocaleString(language.intl()) },
@@ -283,9 +373,167 @@ export function SessionContextTab() {
           </For>
         </div>
 
+        <Show when={sources()}>
+          {(data) => (
+            <div class="flex flex-col gap-3">
+              <div class="text-12-regular text-text-weak">{language.t("context.sources.title")}</div>
+              <div class="h-2 w-full rounded-full bg-surface-base overflow-hidden flex">
+                <For each={data().segments}>
+                  {(segment) => (
+                    <div
+                      class="h-full"
+                      style={{
+                        width: `${segment.width}%`,
+                        "background-color": SOURCE_COLOR[segment.key],
+                      }}
+                    />
+                  )}
+                </For>
+              </div>
+              <div class="flex flex-wrap gap-x-3 gap-y-1">
+                <For each={data().segments}>
+                  {(segment) => (
+                    <div class="flex items-center gap-1 text-11-regular text-text-weak">
+                      <div class="size-2 rounded-sm" style={{ "background-color": SOURCE_COLOR[segment.key] }} />
+                      <div>{sourceLabel(segment.key)}</div>
+                      <div class="text-text-weaker">{segment.percent.toLocaleString(language.intl())}%</div>
+                    </div>
+                  )}
+                </For>
+              </div>
+              <Accordion multiple>
+                <For each={data().segments}>
+                  {(segment) => {
+                    const maxTokens = Math.max(1, ...segment.items.map((i) => i.tokens));
+                    const visible = createMemo(() =>
+                      segment.key === "skills" ? sortSkills(segment.items, skillSort(), skillQuery()) : segment.items
+                    );
+                    return (
+                      <Accordion.Item value={`source-${segment.key}`}>
+                        <Accordion.Trigger>
+                        <div class="flex items-center justify-between gap-3 w-full text-left">
+                          <div class="flex items-center gap-2 min-w-0">
+                            <div
+                              class="size-2 rounded-sm shrink-0"
+                              style={{ "background-color": SOURCE_COLOR[segment.key] }}
+                            />
+                            <div class="truncate">{sourceLabel(segment.key)}</div>
+                          </div>
+                          <div class="flex items-center gap-3 shrink-0 text-12-regular text-text-weak">
+                            <div>{formatter().number(segment.tokens)}</div>
+                            <div>{segment.percent.toLocaleString(language.intl())}%</div>
+                            <Icon name="chevron-grabber-vertical" size="small" class="shrink-0 text-text-weak" />
+                          </div>
+                        </div>
+                      </Accordion.Trigger>
+                      <Accordion.Content class="bg-background-base">
+                        <div class="ml-5 mr-1 my-1 border-l-2 flex flex-col gap-1" style={{ "border-color": SOURCE_COLOR[segment.key] }}>
+                          <Show when={segment.key === "skills"}>
+                            <div class="px-2 pt-1 pb-1 flex items-center justify-between gap-3">
+                              <div class="flex-1 max-w-[200px]">
+                                <input 
+                                  type="text" 
+                                  placeholder={language.t("context.sources.searchSkills")} 
+                                  value={skillQuery()} 
+                                  onInput={(e) => setSkillQuery(e.currentTarget.value)}
+                                  class="w-full bg-surface-base border border-border-base rounded text-11-regular px-2 py-0.5 outline-none focus:border-border-strong text-text-strong placeholder-text-weaker shadow-sm transition-colors"
+                                />
+                              </div>
+                              <div class="flex items-center gap-0.5 bg-surface-base p-0.5 rounded shadow-sm border border-border-base shrink-0">
+                                <button
+                                  onClick={() => setSkillSort("alpha")}
+                                  class={`px-2 py-0.5 rounded-sm text-[10px] leading-tight transition-colors ${
+                                    skillSort() === "alpha" ? "bg-background-base text-text-strong shadow-sm" : "text-text-weaker hover:text-text-base cursor-pointer"
+                                  }`}
+                                >
+                                  {language.t("context.sources.sortAlpha")}
+                                </button>
+                                <button
+                                  onClick={() => setSkillSort("calls")}
+                                  class={`px-2 py-0.5 rounded-sm text-[10px] leading-tight transition-colors ${
+                                    skillSort() === "calls" ? "bg-background-base text-text-strong shadow-sm" : "text-text-weaker hover:text-text-base cursor-pointer"
+                                  }`}
+                                >
+                                  {language.t("context.sources.sortCalls")}
+                                </button>
+                                <button
+                                  onClick={() => setSkillSort("percent")}
+                                  class={`px-2 py-0.5 rounded-sm text-[10px] leading-tight transition-colors ${
+                                    skillSort() === "percent" ? "bg-background-base text-text-strong shadow-sm" : "text-text-weaker hover:text-text-base cursor-pointer"
+                                  }`}
+                                >
+                                  {language.t("context.sources.sortPercent")}
+                                </button>
+                              </div>
+                            </div>
+                          </Show>
+                          <div class="max-h-[300px] overflow-y-auto pl-2 py-1 flex flex-col gap-[1px]">
+                            <For each={visible()}>
+                              {(item) => {
+                                const ratio = item.tokens / maxTokens;
+                                return (
+                                  <div 
+                                    class="flex items-start justify-between gap-3 text-12-regular px-1.5 py-1 rounded transition-colors bg-[var(--item-bg)] hover:bg-[var(--item-hover-bg)]"
+                                    style={{
+                                      "--item-bg": `color-mix(in srgb, ${SOURCE_COLOR[segment.key]} ${Math.max(2, ratio * 20)}%, transparent)`,
+                                      "--item-hover-bg": `color-mix(in srgb, ${SOURCE_COLOR[segment.key]} ${Math.max(6, ratio * 20 + 8)}%, transparent)`,
+                                    }}
+                                  >
+                                    <div class="min-w-0 flex flex-col justify-center">
+                                      <div class="flex items-center gap-1.5 flex-wrap">
+                                        <span class="text-text-strong truncate">{item.title}</span>
+                                        <Show when={sourceMeta(item).length > 0}>
+                                          <For each={sourceMeta(item)}>
+                                            {(meta) => (
+                                              <span
+                                                class={`px-1 rounded text-[10px] leading-tight border whitespace-nowrap ${
+                                                  meta.tone === "loaded"
+                                                    ? "text-text-strong border-transparent"
+                                                    : "bg-surface-base text-text-weak border-border-base"
+                                                }`}
+                                                style={
+                                                  meta.tone === "loaded"
+                                                    ? {
+                                                        "background-color": "color-mix(in srgb, var(--syntax-string) 30%, var(--surface-base))",
+                                                      }
+                                                    : undefined
+                                                }
+                                              >
+                                                {meta.text}
+                                              </span>
+                                            )}
+                                          </For>
+                                        </Show>
+                                      </div>
+                                      <Show when={item.source}>
+                                        {(source) => <div class="text-11-regular text-text-weaker truncate mt-0.5" title={source()}>{source()}</div>}
+                                      </Show>
+                                    </div>
+                                    <div class="shrink-0 text-right">
+                                      <div class="text-text-strong">{formatter().number(item.tokens)}</div>
+                                      <div class="text-[10px] text-text-weaker leading-tight">
+                                        {item.percent.toLocaleString(language.intl())}%
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              }}
+                            </For>
+                          </div>
+                        </div>
+                      </Accordion.Content>
+                    </Accordion.Item>
+                  );
+                }}
+                </For>
+              </Accordion>
+            </div>
+          )}
+        </Show>
+
         <Show when={breakdown().length > 0}>
-          <div class="flex flex-col gap-2">
-            <div class="text-12-regular text-text-weak">{language.t("context.breakdown.title")}</div>
+          <div class="flex flex-col gap-2 mt-4 opacity-70 transition-opacity hover:opacity-100">
+            <div class="text-12-regular text-text-weak">{language.t("context.breakdown.legacyTitle")}</div>
             <div class="h-2 w-full rounded-full bg-surface-base overflow-hidden flex">
               <For each={breakdown()}>
                 {(segment) => (
@@ -310,7 +558,6 @@ export function SessionContextTab() {
                 )}
               </For>
             </div>
-            <div class="hidden text-11-regular text-text-weaker">{language.t("context.breakdown.note")}</div>
           </div>
         </Show>
 
