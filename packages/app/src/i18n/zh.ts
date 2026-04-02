@@ -379,6 +379,8 @@ export const dict = {
   "context.sources.skills": "技能",
   "context.sources.tools": "工具",
   "context.sources.conversation": "对话",
+  "context.sources.files": "文件",
+  "context.sources.logs": "终端与日志",
   "context.sources.other": "其他",
   "context.sources.groupBuiltIn": "内置",
   "context.sources.groupProjectUser": "项目 / 用户",

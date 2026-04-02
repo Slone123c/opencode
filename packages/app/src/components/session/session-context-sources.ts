@@ -1,4 +1,4 @@
-export type ContextSourceCategory = "instructions" | "skills" | "tools" | "conversation" | "other"
+export type ContextSourceCategory = "instructions" | "skills" | "tools" | "conversation" | "files" | "logs" | "other"
 export type ContextSkillSort = "alpha" | "calls" | "percent"
 
 export type ContextSourceItem = {
@@ -9,6 +9,7 @@ export type ContextSourceItem = {
   group?: string
   calls?: number
   tokens: number
+  content?: string
 }
 
 export type ContextSourceSegment = {

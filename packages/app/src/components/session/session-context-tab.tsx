@@ -12,6 +12,8 @@ import { StickyAccordionHeader } from "@opencode-ai/ui/sticky-accordion-header"
 import { File } from "@opencode-ai/ui/file"
 import { Markdown } from "@opencode-ai/ui/markdown"
 import { ScrollView } from "@opencode-ai/ui/scroll-view"
+import { Dialog } from "@opencode-ai/ui/dialog"
+import { useDialog } from "@opencode-ai/ui/context/dialog"
 import type { Message, Part, UserMessage } from "@opencode-ai/sdk/v2/client"
 import { useLanguage } from "@/context/language"
 import { useProviders } from "@/hooks/use-providers"
@@ -34,6 +36,8 @@ const SOURCE_COLOR: Record<ContextSourceCategory, string> = {
   skills: "var(--syntax-string)",
   tools: "var(--syntax-warning)",
   conversation: "var(--syntax-success)",
+  files: "var(--syntax-property)",
+  logs: "var(--syntax-error)",
   other: "var(--syntax-comment)",
 }
 
@@ -121,6 +125,7 @@ export function SessionContextTab() {
   const language = useLanguage()
   const providers = useProviders()
   const { params, view } = useSessionLayout()
+  const dialog = useDialog()
 
   const info = createMemo(() => (params.id ? sync.session.get(params.id) : undefined))
 
@@ -227,6 +232,8 @@ export function SessionContextTab() {
     if (key === "skills") return language.t("context.sources.skills")
     if (key === "tools") return language.t("context.sources.tools")
     if (key === "conversation") return language.t("context.sources.conversation")
+    if (key === "files") return language.t("context.sources.files")
+    if (key === "logs") return language.t("context.sources.logs")
     return language.t("context.sources.other")
   }
 
@@ -457,9 +464,37 @@ export function SessionContextTab() {
                       const SegmentItem = (props: { item: any }) => {
                         const item = props.item;
                         const ratio = item.tokens / maxTokens;
+                        const contentLines: string[] = [];
+                        if (item.content) {
+                          contentLines.push(item.content);
+                        } else if (item.items && item.items.length > 0) {
+                          item.items.forEach((i: any) => {
+                            if (i.content) {
+                              contentLines.push(`// --- ${i.title} ---`);
+                              contentLines.push(i.content);
+                              contentLines.push("");
+                            }
+                          });
+                        }
+                        const resolvedContent = contentLines.join("\n").trim();
+                        const hasContent = !!resolvedContent;
+                        
                         return (
                           <div 
-                            class="flex items-start justify-between gap-3 text-12-regular px-1.5 py-1 rounded transition-colors bg-[var(--item-bg)] hover:bg-[var(--item-hover-bg)]"
+                            class={`flex items-start justify-between gap-3 text-12-regular px-1.5 py-1 rounded transition-colors bg-[var(--item-bg)] hover:bg-[var(--item-hover-bg)] ${hasContent ? 'cursor-pointer' : ''}`}
+                            onClick={() => {
+                              if (!hasContent) return;
+                              dialog.show(() => (
+                                <Dialog size="large" fit class="w-[min(calc(100vw-40px),720px)] h-[min(calc(100vh-40px),600px)] -mt-20 min-h-0 overflow-hidden">
+                                  <div class="flex flex-col flex-1 min-w-0 p-8 h-full bg-surface-base">
+                                    <h1 class="text-16-medium text-text-strong mb-4 shrink-0">{item.title}</h1>
+                                    <div class="flex-1 min-h-0 overflow-y-auto w-full">
+                                      <Markdown text={`\`\`\`text\n${resolvedContent}\n\`\`\``} />
+                                    </div>
+                                  </div>
+                                </Dialog>
+                              ));
+                            }}
                             style={{
                               "--item-bg": `color-mix(in srgb, ${SOURCE_COLOR[segment.key]} ${Math.max(2, ratio * 20)}%, transparent)`,
                               "--item-hover-bg": `color-mix(in srgb, ${SOURCE_COLOR[segment.key]} ${Math.max(6, ratio * 20 + 8)}%, transparent)`,
