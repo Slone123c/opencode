@@ -24,6 +24,7 @@ export interface Settings {
     releaseNotes: boolean
     followup: "queue" | "steer"
     showReasoningSummaries: boolean
+    showContextSources: boolean
     shellToolPartsExpanded: boolean
     editToolPartsExpanded: boolean
   }
@@ -84,12 +85,13 @@ export function sansFontFamily(font: string | undefined) {
   return stack(font, sansBase)
 }
 
-const defaultSettings: Settings = {
+export const defaultSettings: Settings = {
   general: {
     autoSave: true,
     releaseNotes: true,
     followup: "steer",
     showReasoningSummaries: false,
+    showContextSources: true,
     shellToolPartsExpanded: false,
     editToolPartsExpanded: false,
   },
@@ -168,6 +170,13 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
         ),
         setShowReasoningSummaries(value: boolean) {
           setStore("general", "showReasoningSummaries", value)
+        },
+        showContextSources: withFallback(
+          () => store.general?.showContextSources,
+          defaultSettings.general.showContextSources,
+        ),
+        setShowContextSources(value: boolean) {
+          setStore("general", "showContextSources", value)
         },
         shellToolPartsExpanded: withFallback(
           () => store.general?.shellToolPartsExpanded,

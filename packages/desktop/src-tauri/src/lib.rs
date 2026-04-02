@@ -303,7 +303,9 @@ pub fn run() {
     let builder = make_specta_builder();
 
     #[cfg(debug_assertions)] // <- Only export on non-release builds
-    export_types(&builder);
+    if env::current_exe().ok().as_ref().is_none_or(|path| !bundled(path)) {
+        export_types(&builder);
+    }
 
     #[cfg(all(target_os = "macos", not(debug_assertions)))]
     let _ = std::process::Command::new("killall")
@@ -400,9 +402,13 @@ fn export_types(builder: &tauri_specta::Builder<tauri::Wry>) {
     builder
         .export(
             specta_typescript::Typescript::default(),
-            "../src/bindings.ts",
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src/bindings.ts"),
         )
         .expect("Failed to export typescript bindings");
+}
+
+fn bundled(path: &std::path::Path) -> bool {
+    path.to_string_lossy().contains(".app/Contents/MacOS/")
 }
 
 #[cfg(test)]
@@ -410,6 +416,17 @@ fn export_types(builder: &tauri_specta::Builder<tauri::Wry>) {
 fn test_export_types() {
     let builder = make_specta_builder();
     export_types(&builder);
+}
+
+#[cfg(test)]
+#[test]
+fn test_bundled() {
+    assert!(bundled(std::path::Path::new(
+        "/Applications/OpenCode Dev.app/Contents/MacOS/OpenCode",
+    )));
+    assert!(!bundled(std::path::Path::new(
+        "/Users/slone/Downloads/opencode/packages/desktop/src-tauri/target/debug/opencode-desktop",
+    )));
 }
 
 #[derive(tauri_specta::Event, serde::Deserialize, specta::Type)]

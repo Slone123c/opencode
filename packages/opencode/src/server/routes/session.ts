@@ -8,6 +8,7 @@ import { MessageV2 } from "../../session/message-v2"
 import { SessionPrompt } from "../../session/prompt"
 import { SessionCompaction } from "../../session/compaction"
 import { SessionRevert } from "../../session/revert"
+import { SessionContextSource, estimateMessageContextSource } from "../../session/context-source"
 import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
 import { Todo } from "../../session/todo"
@@ -630,6 +631,37 @@ export const SessionRoutes = lazy(() =>
           c.header("X-Next-Cursor", page.cursor)
         }
         return c.json(page.items)
+      },
+    )
+    .get(
+      "/:sessionID/message/:messageID/context",
+      describeRoute({
+        summary: "Get message context sources",
+        description: "Retrieve an approximate breakdown of the sources that make up a message's input context.",
+        operationId: "session.messageContext",
+        responses: {
+          200: {
+            description: "Message context source breakdown",
+            content: {
+              "application/json": {
+                schema: resolver(SessionContextSource.Info),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: z.string().meta({ description: "Session ID" }),
+          messageID: z.string().meta({ description: "Message ID" }),
+        }),
+      ),
+      async (c) => {
+        const params = c.req.valid("param")
+        const context = await estimateMessageContextSource(params)
+        return c.json(context)
       },
     )
     .get(

@@ -3650,6 +3650,62 @@ export type SessionPromptResponses = {
 
 export type SessionPromptResponse = SessionPromptResponses[keyof SessionPromptResponses]
 
+export type SessionMessageContextData = {
+  body?: never
+  path: {
+    /**
+     * Session ID
+     */
+    sessionID: string
+    /**
+     * Message ID
+     */
+    messageID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/message/{messageID}/context"
+}
+
+export type SessionMessageContextErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionMessageContextError = SessionMessageContextErrors[keyof SessionMessageContextErrors]
+
+export type SessionMessageContextResponses = {
+  /**
+   * Message context source breakdown
+   */
+  200: {
+    input: number
+    segments: Array<{
+      key: "instructions" | "skills" | "tools" | "conversation" | "other"
+      tokens: number
+      items: Array<{
+        category: "instructions" | "skills" | "tools" | "conversation" | "other"
+        key: string
+        title: string
+        source?: string
+        group?: string
+        calls?: number
+        tokens: number
+      }>
+    }>
+  }
+}
+
+export type SessionMessageContextResponse = SessionMessageContextResponses[keyof SessionMessageContextResponses]
+
 export type SessionDeleteMessageData = {
   body?: never
   path: {

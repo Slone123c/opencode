@@ -21,6 +21,12 @@ bun run --cwd packages/desktop tauri dev
 bun run --cwd packages/desktop tauri build
 ```
 
+To build, install into `/Applications`, and open the app on macOS:
+
+```bash
+bun run --cwd packages/desktop app:install
+```
+
 ## Troubleshooting
 
 ### Rust compiler not found
