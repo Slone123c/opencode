@@ -1,4 +1,4 @@
-import { createMemo, createEffect, createResource, on, onCleanup, For, Show, createSignal } from "solid-js"
+import { createMemo, createEffect, on, onCleanup, For, Show, createSignal } from "solid-js"
 import type { JSX } from "solid-js"
 import { useSync } from "@/context/sync"
 import { useSDK } from "@/context/sdk"
@@ -279,28 +279,41 @@ export function SessionContextTab() {
     return list
   }
 
-  const [sourceData] = createResource(
-    () => {
-      if (!settings.general.showContextSources()) return
-      const sessionID = params.id
-      const messageID = ctx()?.message.id
-      if (!sessionID || !messageID) return
-      return { sessionID, messageID }
-    },
-    async (input) => {
-      return sdk.client.session
-        .messageContext(input)
-        .then((result) => result.data ?? { input: 0, segments: [] })
-        .catch(() => ({ input: 0, segments: [] }))
-    },
-  )
+  const [sources, setSources] = createSignal<ReturnType<typeof createContextSourceView> | undefined>(undefined)
 
-  const sources = createMemo(() => {
-    if (!settings.general.showContextSources()) return
-    const data = sourceData()
-    if (!data?.segments?.length) return
-    return createContextSourceView(data)
-  })
+  let fetchKey = ""
+  createEffect(
+    on(
+      () => {
+        if (!settings.general.showContextSources()) return
+        const sid = params.id
+        const mid = ctx()?.message.id
+        if (!sid || !mid) return
+        return `${sid}/${mid}`
+      },
+      (key) => {
+        if (!key) {
+          fetchKey = ""
+          setSources(undefined)
+          return
+        }
+        if (key === fetchKey) return
+        fetchKey = key
+        const [sid, mid] = key.split("/")
+        sdk.client.session
+          .messageContext({ sessionID: sid, messageID: mid })
+          .then((result) => {
+            if (fetchKey !== key) return
+            const data = result.data ?? { input: 0, segments: [] }
+            setSources(data.segments?.length ? createContextSourceView(data) : undefined)
+          })
+          .catch(() => {
+            if (fetchKey !== key) return
+            setSources(undefined)
+          })
+      },
+    ),
+  )
 
   const [activeSegment, setActiveSegment] = createSignal<string | null>(null)
 
