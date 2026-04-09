@@ -8,10 +8,12 @@ import { Global } from "../global"
 import { Auth } from "../auth"
 import { MCP } from "../mcp"
 import { Provider } from "../provider/provider"
+import { ModelID } from "../provider/schema"
 import { ProviderTransform } from "../provider/transform"
 import { Instance } from "../project/instance"
-import { InstructionPrompt } from "./instruction"
+import { Instruction } from "./instruction"
 import { MessageV2 } from "./message-v2"
+import { SessionID } from "./schema"
 import { SystemPrompt } from "./system"
 import { ToolRegistry } from "../tool/registry"
 
@@ -447,7 +449,7 @@ export async function estimateMessageContextSource(input: {
   sessionID: string
   messageID: string
 }): Promise<SessionContextSource.Info> {
-  const messages = await Session.messages({ sessionID: input.sessionID })
+  const messages = await Session.messages({ sessionID: SessionID.make(input.sessionID) })
   const target = messages.find((item) => item.info.id === input.messageID)
   if (!target || target.info.role !== "assistant") return { input: 0, segments: [] }
 
@@ -497,7 +499,7 @@ export async function estimateMessageContextSource(input: {
     })
   }
 
-  for (const instruction of await InstructionPrompt.system()) {
+  for (const instruction of await Instruction.system()) {
     append(items, instructionItem(instruction))
   }
 
@@ -512,7 +514,15 @@ export async function estimateMessageContextSource(input: {
     })
   }
 
-  for (const tool of await ToolRegistry.tools({ modelID: model.api.id, providerID: model.providerID }, agent).catch(() => [])) {
+  const tools = agent
+    ? await ToolRegistry.tools({
+        modelID: ModelID.make(model.api.id),
+        providerID: model.providerID,
+        agent,
+      }).catch(() => [])
+    : []
+
+  for (const tool of tools) {
     const schema = ProviderTransform.schema(model, z.toJSONSchema(tool.parameters))
     if (tool.id === "skill") {
       const split = splitSkillDescription(tool.description)
@@ -557,7 +567,7 @@ export async function estimateMessageContextSource(input: {
   }
 
   for (const [id, tool] of Object.entries(await MCP.tools().catch(() => ({})))) {
-    const schema = ProviderTransform.schema(model, asSchema(tool.inputSchema).jsonSchema)
+    const schema = ProviderTransform.schema(model, await Promise.resolve(asSchema(tool.inputSchema).jsonSchema))
     toolDetail(items, {
       category: "tools",
       id,
