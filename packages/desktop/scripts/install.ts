@@ -2,7 +2,7 @@
 
 import { $ } from "bun"
 import path from "node:path"
-import { appBundle, dmgBundle, signApp } from "./utils"
+import { appBundle, bun, dmgBundle, signApp } from "./utils"
 
 if (process.platform !== "darwin") {
   throw new Error("desktop install script only supports macOS")
@@ -22,7 +22,7 @@ const dir = (() => {
 const root = path.join(import.meta.dir, "..")
 
 console.log(`Building ${mode} desktop app...`)
-await $`bun ./scripts/ensure-sidecar.ts`.cwd(root)
+await bun(["./scripts/ensure-sidecar.ts"], root)
 if (mode === "debug") await $`bunx tauri build --debug -b app`.cwd(root)
 if (mode === "release") await $`bunx tauri build -b app`.cwd(root)
 

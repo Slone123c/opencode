@@ -3,6 +3,52 @@ import native from "node:fs"
 import fs from "node:fs/promises"
 import path from "node:path"
 
+const root = path.join(import.meta.dir, "../../..")
+const pkg = await Bun.file(path.join(root, "package.json")).json().catch(() => ({} as { packageManager?: string }))
+const need = pkg.packageManager?.split("@")[1] ?? process.versions.bun
+
+function ver(input: string) {
+  return input
+    .split("-")[0]
+    .split(".")
+    .map((item) => Number(item) || 0)
+}
+
+function ok(cur: string, req: string) {
+  const [ca = 0, cb = 0, cc = 0] = ver(cur)
+  const [ra = 0, rb = 0, rc = 0] = ver(req)
+  if (ca !== ra) return false
+  if (cb !== rb) return cb > rb
+  return cc >= rc
+}
+
+export function bunArgs(args: string[], cur = process.versions.bun, req = need) {
+  if (ok(cur, req)) return ["bun", ...args]
+  return ["bun", ...args]
+}
+
+export function bunEnv(cur = process.versions.bun, req = need) {
+  if (ok(cur, req)) return
+  return {
+    ...process.env,
+    OPENCODE_SKIP_BUN_VERSION_CHECK: "1",
+  }
+}
+
+export async function bun(args: string[], cwd?: string) {
+  const proc = Bun.spawn(bunArgs(args), {
+    cwd,
+    env: bunEnv() ?? process.env,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  })
+
+  const code = await proc.exited
+  if (code === 0) return
+  throw new Error(`Failed with exit code ${code}: ${bunArgs(args).join(" ")}`)
+}
+
 export const SIDECAR_BINARIES: Array<{ rustTarget: string; ocBinary: string; assetExt: string }> = [
   {
     rustTarget: "aarch64-apple-darwin",

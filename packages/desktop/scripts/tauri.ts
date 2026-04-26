@@ -2,7 +2,7 @@
 
 import { $, argv } from "bun"
 import path from "node:path"
-import { signApp } from "./utils"
+import { bun, signApp } from "./utils"
 
 function patch(args: string[]) {
   if (process.platform !== "darwin") return args
@@ -25,7 +25,7 @@ function patch(args: string[]) {
 
 const args = patch(argv.slice(2))
 
-await $`bun ./scripts/ensure-sidecar.ts`
+await bun(["./scripts/ensure-sidecar.ts"])
 await $`bunx tauri ${args}`
 
 if (process.platform !== "darwin") process.exit(0)
