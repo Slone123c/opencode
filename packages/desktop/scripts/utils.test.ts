@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { appBundle, dmgBundle, stale } from "./utils"
+import { appBundle, bunArgs, bunEnv, dmgBundle, stale } from "./utils"
 
 const dirs: string[] = []
 
@@ -78,5 +78,20 @@ describe("desktop.bundle", () => {
     await fs.mkdir(path.join(dir, "src-tauri/target/debug/bundle/macos/B.app"), { recursive: true })
 
     expect(() => appBundle(dir, "debug")).toThrow("Expected 1 app bundle")
+  })
+})
+
+describe("desktop.bun", () => {
+  test("uses local bun when version satisfies packageManager", () => {
+    expect(bunArgs(["run", "build"], "1.3.11", "1.3.11")).toEqual(["bun", "run", "build"])
+    expect(bunArgs(["run", "build"], "1.3.12", "1.3.11")).toEqual(["bun", "run", "build"])
+    expect(bunEnv("1.3.12", "1.3.11")).toBeUndefined()
+  })
+
+  test("uses local bun with version override when local bun is too old", () => {
+    expect(bunArgs(["run", "build"], "1.3.10", "1.3.11")).toEqual(["bun", "run", "build"])
+    expect(bunEnv("1.3.10", "1.3.11")).toMatchObject({
+      OPENCODE_SKIP_BUN_VERSION_CHECK: "1",
+    })
   })
 })
